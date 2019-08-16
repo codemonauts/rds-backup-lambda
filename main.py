@@ -7,17 +7,18 @@ import re
 # Region where the automated snapshots are located
 SOURCE_REGION = 'eu-west-1'
 # List of RDS instances which snapshots should be copied
-SOURCE_DB = ['test-instance']
+SOURCE_DB = ['my-rds-instance']
 # List of RDS clusters which snapshots should be copied
-SOURCE_CLUSTER = ['influencerpool-serverless']
+SOURCE_CLUSTER = ['my-aurora-cluster', 'my-second-cluster']
+# KMS Key in target region to use for Aurora Cluster Snapshots
+DEST_KMS = "arn:aws:kms:eu-central-1:ABC123:key/abc123"
 # Number of snapshots to keep
 KEEP = 10
-
-print('Loading function')
 
 
 def bySnapshotId(snap):
     return snap['DBSnapshotIdentifier']
+
 
 def byClusterSnapshotId(snap):
     return snap['DBClusterSnapshotIdentifier']
@@ -34,9 +35,9 @@ def copy_rds_snapshots(source_client, target_client, account, name):
     print("Copying snapshots for {}".format(name))
     source_snaps = source_client.describe_db_snapshots(SnapshotType='automated', DBInstanceIdentifier=name)['DBSnapshots']
     if len(source_snaps) == 0:
-      print("Found no automated snapshots. Nothing to do")
-      return
-    
+        print("Found no automated snapshots. Nothing to do")
+        return
+
     source_snap = sorted(source_snaps, key=bySnapshotId, reverse=True)[0]['DBSnapshotIdentifier']
     source_snap_arn = 'arn:aws:rds:{}:{}:snapshot:{}'.format(SOURCE_REGION, account, source_snap)
     target_snap_id = 'copy-of-{}'.format(re.sub('rds:', '', source_snap))
@@ -64,22 +65,19 @@ def copy_cluster_snapshots(source_client, target_client, account, cluster_name):
     print("Copying snapshots for {}".format(cluster_name))
     source_snaps = source_client.describe_db_cluster_snapshots(SnapshotType='automated', DBClusterIdentifier=cluster_name)['DBClusterSnapshots']
     if len(source_snaps) == 0:
-      print("Found no automated snapshots. Nothing to do")
-      return
+        print("Found no automated snapshots. Nothing to do")
+        return
     source_snap = sorted(source_snaps, key=byClusterSnapshotId, reverse=True)[0]['DBClusterSnapshotIdentifier']
     source_snap_arn = 'arn:aws:rds:{}:{}:cluster-snapshot:{}'.format(SOURCE_REGION, account, source_snap)
     target_snap_id = 'copy-of-{}'.format(re.sub('rds:', '', source_snap))
     print('Will copy {} to {}'.format(source_snap_arn, target_snap_id))
 
-    try:
-        target_client.copy_db_cluster_snapshot(
-            SourceDBClusterSnapshotIdentifier=source_snap_arn,
-            TargetDBClusterSnapshotIdentifier=target_snap_id,
-            CopyTags=True)
-    except botocore.exceptions.ClientError as e:
-       raise Exception("Could not issue copy command: %s" % e)
+    target_client.copy_db_cluster_snapshot(SourceDBClusterSnapshotIdentifier=source_snap_arn,
+                                           TargetDBClusterSnapshotIdentifier=target_snap_id,
+                                           KmsKeyId=DEST_KMS,
+                                           SourceRegion=SOURCE_REGION)
 
-    copied_snaps = target_client.describe_db_cluster_snapshots(SnapshotType='manual', DBInstanceIdentifier=cluster_name)['DBClusterSnapshots']
+    copied_snaps = target_client.describe_db_cluster_snapshots(SnapshotType='manual', DBClusterIdentifier=cluster_name)['DBClusterSnapshots']
     if len(copied_snaps) > KEEP:
         for snap in sorted(copied_snaps, key=byTimestamp, reverse=True)[KEEP:]:
             snap_id = snap['DBClusterSnapshotIdentifier']
