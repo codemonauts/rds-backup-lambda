@@ -47,7 +47,9 @@ def copy_rds_snapshots(source_client, target_client, account, name):
         target_client.copy_db_snapshot(
             SourceDBSnapshotIdentifier=source_snap_arn,
             TargetDBSnapshotIdentifier=target_snap_id,
-            CopyTags=True)
+            KmsKeyId=DEST_KMS,
+            CopyTags=True,
+            SourceRegion=SOURCE_REGION)
     except botocore.exceptions.ClientError as e:
         raise Exception("Could not issue copy command: %s" % e)
 
