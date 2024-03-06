@@ -1,8 +1,14 @@
 #! /usr/bin/env python3
-import boto3
-import botocore
+
+"""
+Small AWS Lambda function to copy RDS snapshots to another region.
+"""
+
 import datetime
 import re
+
+import boto3
+import botocore
 
 # Region where the automated snapshots are located
 SOURCE_REGION = "eu-west-1"
@@ -16,23 +22,40 @@ DEST_KMS = "arn:aws:kms:eu-central-1:ABC123:key/abc123"
 KEEP = 10
 
 
-def bySnapshotId(snap):
+class BackupException(Exception):
+    """
+    Backup exception raised when somthing went wrong doing the backups.
+    """
+
+
+def by_snapshot_id(snap):
+    """
+    Returns the snapshot identifier for an RDS instance
+    """
     return snap["DBSnapshotIdentifier"]
 
 
-def byClusterSnapshotId(snap):
+def by_cluster_snapshot_id(snap):
+    """
+    Returns the snapshot identifier for an RDS cluster instance
+    """
     return snap["DBClusterSnapshotIdentifier"]
 
 
-def byTimestamp(snap):
+def by_timestamp(snap):
+    """
+    Returns the timestamp of a snapshot
+    """
     if "SnapshotCreateTime" in snap:
         return datetime.datetime.isoformat(snap["SnapshotCreateTime"])
-    else:
-        return datetime.datetime.isoformat(datetime.datetime.now())
+    return datetime.datetime.isoformat(datetime.datetime.now())
 
 
 def copy_rds_snapshots(source_client, target_client, account, name):
-    print("Copying snapshots for {}".format(name))
+    """
+    Copies snapshots from an RDS instance
+    """
+    print(f"Copying snapshots for {name}")
     source_snaps = source_client.describe_db_snapshots(SnapshotType="automated", DBInstanceIdentifier=name)[
         "DBSnapshots"
     ]
@@ -40,10 +63,10 @@ def copy_rds_snapshots(source_client, target_client, account, name):
         print("Found no automated snapshots. Nothing to do")
         return
 
-    source_snap = sorted(source_snaps, key=bySnapshotId, reverse=True)[0]["DBSnapshotIdentifier"]
-    source_snap_arn = "arn:aws:rds:{}:{}:snapshot:{}".format(SOURCE_REGION, account, source_snap)
-    target_snap_id = "copy-of-{}".format(re.sub("rds:", "", source_snap))
-    print("Will copy {} to {}".format(source_snap_arn, target_snap_id))
+    source_snap = sorted(source_snaps, key=by_snapshot_id, reverse=True)[0]["DBSnapshotIdentifier"]
+    source_snap_arn = f"arn:aws:rds:{SOURCE_REGION}:{account}:snapshot:{source_snap}"
+    target_snap_id = f"copy-of-{re.sub('rds:', '', source_snap)}"
+    print(f"Will copy {source_snap_arn} to {target_snap_id}")
 
     try:
         target_client.copy_db_snapshot(
@@ -53,31 +76,34 @@ def copy_rds_snapshots(source_client, target_client, account, name):
             CopyTags=True,
             SourceRegion=SOURCE_REGION,
         )
-    except botocore.exceptions.ClientError as e:
-        raise Exception("Could not issue copy command: %s" % e)
+    except botocore.exceptions.ClientError as ex:
+        raise BackupException(f"Could not issue copy command: {ex}") from ex
 
     copied_snaps = target_client.describe_db_snapshots(SnapshotType="manual", DBInstanceIdentifier=name)["DBSnapshots"]
     if len(copied_snaps) > KEEP:
-        for snap in sorted(copied_snaps, key=byTimestamp, reverse=True)[KEEP:]:
-            print("Will remove {}".format(snap["DBSnapshotIdentifier"]))
+        for snap in sorted(copied_snaps, key=by_timestamp, reverse=True)[KEEP:]:
+            print(f"Will remove {snap['DBSnapshotIdentifier']}")
             try:
                 target_client.delete_db_snapshot(DBSnapshotIdentifier=snap["DBSnapshotIdentifier"])
-            except botocore.exceptions.ClientError as e:
-                raise Exception("Could not delete snapshot {}: {}".format(snap["DBSnapshotIdentifier"], e))
+            except botocore.exceptions.ClientError as ex:
+                raise BackupException(f"Could not delete snapshot {snap['DBSnapshotIdentifier']}: {ex}") from ex
 
 
 def copy_cluster_snapshots(source_client, target_client, account, cluster_name):
-    print("Copying snapshots for {}".format(cluster_name))
+    """
+    Coppies snapshots from a RDS cluster
+    """
+    print(f"Copying snapshots for {cluster_name}")
     source_snaps = source_client.describe_db_cluster_snapshots(
         SnapshotType="automated", DBClusterIdentifier=cluster_name
     )["DBClusterSnapshots"]
     if len(source_snaps) == 0:
         print("Found no automated snapshots. Nothing to do")
         return
-    source_snap = sorted(source_snaps, key=byClusterSnapshotId, reverse=True)[0]["DBClusterSnapshotIdentifier"]
-    source_snap_arn = "arn:aws:rds:{}:{}:cluster-snapshot:{}".format(SOURCE_REGION, account, source_snap)
-    target_snap_id = "copy-of-{}".format(re.sub("rds:", "", source_snap))
-    print("Will copy {} to {}".format(source_snap_arn, target_snap_id))
+    source_snap = sorted(source_snaps, key=by_cluster_snapshot_id, reverse=True)[0]["DBClusterSnapshotIdentifier"]
+    source_snap_arn = f"arn:aws:rds:{SOURCE_REGION}:{account}:cluster-snapshot:{source_snap}"
+    target_snap_id = f"copy-of-{re.sub('rds:', '', source_snap)}"
+    print(f"Will copy {source_snap_arn} to {target_snap_id}")
 
     target_client.copy_db_cluster_snapshot(
         SourceDBClusterSnapshotIdentifier=source_snap_arn,
@@ -90,16 +116,22 @@ def copy_cluster_snapshots(source_client, target_client, account, cluster_name):
         "DBClusterSnapshots"
     ]
     if len(copied_snaps) > KEEP:
-        for snap in sorted(copied_snaps, key=byTimestamp, reverse=True)[KEEP:]:
+        for snap in sorted(copied_snaps, key=by_timestamp, reverse=True)[KEEP:]:
             snap_id = snap["DBClusterSnapshotIdentifier"]
-            print("Will remove {}".format(snap_id))
+            print(f"Will remove {snap_id}")
             try:
                 target_client.delete_db_snapshot(DBClusterSnapshotIdentifier=snap_id)
-            except botocore.exceptions.ClientError as e:
-                raise Exception("Could not delete snapshot {}: {}".format(snap_id, e))
+            except botocore.exceptions.ClientError as ex:
+                raise BackupException(f"Could not delete snapshot {snap_id}: {ex}") from ex
 
 
 def lambda_handler(event, context):
+    """
+    Entrypoint for AWS Lambda
+    """
+    if context:
+        print(f"Starting '{context.function_name}' version {context.function_version}")
+
     target_region = event["region"]
     account = event["account"]
     source_client = boto3.client("rds", region_name=SOURCE_REGION)
