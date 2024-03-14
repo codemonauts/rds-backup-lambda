@@ -1,3 +1,7 @@
 /.direnv
 /dist
 /package.zip
+/.terraform
+/*.tfstate
+/*.tfplan
+/.terraform.lock.hcl
