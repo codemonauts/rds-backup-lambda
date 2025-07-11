@@ -4,11 +4,11 @@ pkgs.mkShell {
   buildInputs = with pkgs; [
     black
     terraform
-    python311Packages.pip
-    python311Packages.pylint
-    python311Packages.botocore
-    python311Packages.boto3
-    python311Packages.environs
+    python313Packages.pip
+    python313Packages.pylint
+    python313Packages.botocore
+    python313Packages.boto3
+    python313Packages.environs
     zip
   ];
 }
