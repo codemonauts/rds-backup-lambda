@@ -97,7 +97,7 @@ You can use the `main.tf` to
 - Create all roles.
 - A log group.
 - The Lambda function itself.
-- A scheduler to invoke the Lambda function at a 12 hours rate.
+- A scheduler to invoke the Lambda function at a one days rate.
 
 If you know what you do, you can do:
 
