@@ -41,7 +41,9 @@ def by_timestamp(snap):
     return datetime.datetime.isoformat(datetime.datetime.now())
 
 
-def copy_rds_snapshots(source_client, target_client, source_region, account, name, kms, keep):
+def copy_rds_snapshots(
+    source_client, target_client, source_region, account, name, kms, keep
+):  # pylint: disable=too-many-positional-arguments
     """
     Copies snapshots from an RDS instance
     """
@@ -79,7 +81,9 @@ def copy_rds_snapshots(source_client, target_client, source_region, account, nam
                 raise BackupException(f"Could not delete snapshot {snap['DBSnapshotIdentifier']}: {ex}") from ex
 
 
-def copy_cluster_snapshots(source_client, target_client, source_region, account, cluster_name, kms, keep):
+def copy_cluster_snapshots(
+    source_client, target_client, source_region, account, cluster_name, kms, keep
+):  # pylint: disable=too-many-positional-arguments
     """
     Coppies snapshots from a RDS cluster
     """
