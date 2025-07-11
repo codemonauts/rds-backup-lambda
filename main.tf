@@ -24,7 +24,7 @@ variable "aws_account_id" {
 }
 
 variable "log_group_name" {
-  default = "/aws/lambda/${var.lambda_function_name}"
+  default = "/aws/lambda/rds-backup"
   type = string
   description = "The name of the log group in CloudWatch Logs."
 }
@@ -42,7 +42,6 @@ variable "target_region" {
 variable "keep_snapshots" {
   type = number
   description = "Number of snapshots to be kept."
-  default = 10
 }
 
 variable "target_kms" {
@@ -62,7 +61,6 @@ variable "source_cluster" {
 
 variable "profile" {
   type = string
-  default = "default"
   description = "The AWS CLI profile to use."
 }
 
@@ -104,10 +102,10 @@ data "aws_iam_policy_document" "lambda_logging_policy" {
 
     actions = [
       "logs:CreateLogStream",
-      "logs:PutLogEvent"
+      "logs:PutLogEvents"
     ]
 
-    resources = ["arn:aws:logs:${var.aws_account_id}:log-group:${var.log_group_name}:*"]
+    resources = ["arn:aws:logs:${var.source_region}:${var.aws_account_id}:log-group:${var.log_group_name}:*"]
   }
 }
 
@@ -118,8 +116,16 @@ data "aws_iam_policy_document" "lambda_database_policy" {
     effect = "Allow"
 
     actions = [
-      "",
+      "rds:AddTagsToResource",
+      "rds:CopyDBSnapshot",
+      "rds:CopyDBClusterSnapshot",
+      "rds:DeleteDBSnapshot",
+      "rds:Describe*",
+      "rds:ListTagsForResource",
+      "rds:CopyCustomDBEngineVersion"
     ]
+
+    resources = ["*"]
   }
 }
 
@@ -133,7 +139,7 @@ data "aws_iam_policy_document" "scheduler_invoke_lambda_policy" {
       "lambda:InvokeFunction"
     ]
 
-    resources = lambda_function.arn
+    resources = [aws_lambda_function.lambda_function.arn]
   }
 }
 
@@ -158,7 +164,7 @@ resource "aws_iam_role" "scheduler_role" {
   name               = "${var.lambda_function_name}-scheduler-role"
   assume_role_policy = data.aws_iam_policy_document.scheduler_assume_role_policy.json
   inline_policy {
-    name = "invoke Lambda function"
+    name = "invoke-lambda-function"
     policy = data.aws_iam_policy_document.scheduler_invoke_lambda_policy.json
   }
 }
@@ -175,13 +181,13 @@ resource "aws_cloudwatch_log_group" "cw_log_group" {
 resource "aws_scheduler_schedule" "scheduler_daily" {
   name = "${var.lambda_function_name}-daily"
   description = "Daily backup of database snapshot from"
-  group_name = "defaul"
+  group_name = "default"
   flexible_time_window {
     mode = "OFF"
   }
   schedule_expression = "rate(1 days)"
   target {
-    arn = lambda_function.arn
+    arn = aws_lambda_function.lambda_function.arn
     role_arn = aws_iam_role.scheduler_role.arn
     
   }
@@ -197,7 +203,7 @@ resource "aws_lambda_function" "lambda_function" {
 
   runtime = "python3.13"
   architectures = ["arm64"]
-  timeout = 10
+  timeout = 60
 
   environment {
     variables = {
